@@ -32,7 +32,7 @@ GitHub issue to unified diff dataset for supervised fine-tuning.
 """
 
 
-def push_to_hub(hf_upload_dir: Path, repo_id: str, token: str) -> None:
+def push_to_hub(hf_upload_dir: Path, repo_id: str, token: str | None = None) -> None:
     train_path = hf_upload_dir / "train.jsonl"
     test_path = hf_upload_dir / "test.jsonl"
     if not train_path.exists() or not test_path.exists():

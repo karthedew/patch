@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from dotenv import load_dotenv
+from huggingface_hub import get_token
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -14,10 +15,12 @@ from patch.push import push_to_hub
 
 def main() -> None:
     load_dotenv()
-    token = os.getenv("HF_TOKEN")
+    token = os.getenv("HF_TOKEN") or get_token()
     repo_id = os.getenv("HF_REPO_ID")
     if not token:
-        raise SystemExit("HF_TOKEN is required")
+        raise SystemExit(
+            "HF auth required. Set HF_TOKEN in .env or run `hf auth login`."
+        )
     if not repo_id:
         raise SystemExit("HF_REPO_ID is required")
 

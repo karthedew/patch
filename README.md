@@ -99,6 +99,7 @@ make peek
 - Hardcoded target: `pola-rs/polars`
 - Prints a request example plus a sample normalized record to stdout
 - Does not write dataset data to disk
+- Includes full issue body, full PR body, changed files, and unified diff text in the sample
 
 ## Output formats
 
@@ -106,17 +107,17 @@ make peek
 
 Each line is a JSON object with fields such as:
 
-- `repo`, `language`, `domain`
-- `issue_number`, `issue_title`, `issue_body`, `issue_labels`
-- `pr_number`, `pr_title`, `pr_body`, `merged_at`
-- `diff`, `review_count`, `changed_files`
+- `repo`, `language`, `domain`, `license`, `collected_at`
+- `issue_number`, `issue_title`, `issue_body`, `issue_labels`, `issue_created_at`
+- `pr_number`, `pr_title`, `pr_body`, `pr_merged_at`, `base_branch`, `base_sha`, `merge_sha`, `closing_pr_confidence`
+- `diff`, `review_count`, `changed_files`, `additions`, `deletions`, `has_tests`, `test_files_changed`
 
 ### Processed record (`data/processed/*.jsonl`)
 
 Each line is formatted for instruction SFT:
 
 - `messages`: `system`, `user`, `assistant`
-- `metadata`: repo/language/domain/issue/pr identifiers
+- `metadata`: repo/language/domain identifiers plus issue/pr and provenance fields
 
 ### HF upload files (`data/hf_upload/`)
 

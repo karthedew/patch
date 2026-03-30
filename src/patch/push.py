@@ -6,7 +6,7 @@ from datasets import DatasetDict, load_dataset
 from huggingface_hub import HfApi
 
 
-def build_dataset_card(hf_upload_dir: Path) -> str:
+def build_dataset_card() -> str:
     return """# patch dataset
 
 GitHub issue to unified diff dataset for supervised fine-tuning.
@@ -19,7 +19,7 @@ GitHub issue to unified diff dataset for supervised fine-tuning.
 ## Record schema
 
 - `messages`: chat-style prompt/response tuple (`system`, `user`, `assistant`)
-- `metadata`: repository and tracking fields (`repo`, `language`, `domain`, `issue_number`, `pr_number`, `merged_at`)
+- `metadata`: repository and tracking fields (`repo`, `language`, `domain`, `issue_number`, `pr_number`, `issue_created_at`, `pr_merged_at`, `review_count`, `additions`, `deletions`, `base_sha`, `merge_sha`, `base_branch`, `closing_pr_confidence`, `has_tests`, `test_files_changed`, `license`, `collected_at`)
 
 ## System prompt
 
@@ -49,7 +49,7 @@ def push_to_hub(hf_upload_dir: Path, repo_id: str, token: str | None = None) -> 
 
     dataset.push_to_hub(repo_id, private=False, token=token)
 
-    card = build_dataset_card(hf_upload_dir)
+    card = build_dataset_card()
     card_path = hf_upload_dir / "README.md"
     card_path.write_text(card, encoding="utf-8")
 

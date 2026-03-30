@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import json
+import asyncio
+import time
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
+import orjson
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 GITHUB_GRAPHQL = "https://api.github.com/graphql"
 OWNER = "pola-rs"
@@ -55,11 +59,21 @@ query PeekIssues($owner: String!, $repo: String!, $count: Int!) {
 PR_DETAILS_QUERY = """
 query PeekPullRequest($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
+    licenseInfo {
+      spdxId
+    }
     pullRequest(number: $number) {
       number
       title
       body
       mergedAt
+      additions
+      deletions
+      baseRefName
+      baseRefOid
+      mergeCommit {
+        oid
+      }
       reviews {
         totalCount
       }
@@ -75,7 +89,7 @@ query PeekPullRequest($owner: String!, $repo: String!, $number: Int!) {
 """
 
 
-def _extract_merged_pr(issue: dict[str, Any]) -> dict[str, Any] | None:
+def _extract_merged_pr(issue: dict[str, Any]) -> tuple[dict[str, Any], str] | None:
     timeline_nodes = issue.get("timelineItems", {}).get("nodes", [])
     for node in timeline_nodes:
         typename = node.get("__typename")
@@ -86,7 +100,7 @@ def _extract_merged_pr(issue: dict[str, Any]) -> dict[str, Any] | None:
                 and closer.get("__typename") == "PullRequest"
                 and closer.get("mergedAt")
             ):
-                return closer
+                return closer, "direct_close"
         if typename == "CrossReferencedEvent":
             source = node.get("source")
             if (
@@ -94,10 +108,20 @@ def _extract_merged_pr(issue: dict[str, Any]) -> dict[str, Any] | None:
                 and source.get("__typename") == "PullRequest"
                 and source.get("mergedAt")
             ):
-                return source
+                return source, "cross_reference"
     return None
 
 
+async def _respect_rate_limit(response: aiohttp.ClientResponse) -> None:
+    remaining = int(response.headers.get("X-RateLimit-Remaining", "1"))
+    if remaining >= 10:
+        return
+    reset_at = int(response.headers.get("X-RateLimit-Reset", "0"))
+    sleep_for = max(0, reset_at - int(time.time())) + 2
+    await asyncio.sleep(sleep_for)
+
+
+@retry(wait=wait_exponential(min=1, max=60), stop=stop_after_attempt(5), reraise=True)
 async def _graphql(
     session: aiohttp.ClientSession, token: str, query: str, variables: dict[str, Any]
 ) -> dict[str, Any]:
@@ -109,17 +133,46 @@ async def _graphql(
     payload = {"query": query, "variables": variables}
 
     async with session.post(
-        GITHUB_GRAPHQL, headers=headers, data=json.dumps(payload)
+        GITHUB_GRAPHQL, headers=headers, data=orjson.dumps(payload)
     ) as response:
+        await _respect_rate_limit(response)
         text = await response.text()
+        if response.status in {403, 429, 500, 502, 503, 504}:
+            raise RuntimeError(
+                f"GraphQL request failed ({response.status}): {text[:300]}"
+            )
         if response.status >= 400:
             raise RuntimeError(
                 f"GraphQL request failed ({response.status}): {text[:300]}"
             )
-        data = json.loads(text)
+        data = orjson.loads(text)
         if "errors" in data:
             raise RuntimeError(f"GraphQL errors: {data['errors']}")
         return data["data"]
+
+
+@retry(wait=wait_exponential(min=1, max=60), stop=stop_after_attempt(5), reraise=True)
+async def _fetch_diff(
+    session: aiohttp.ClientSession, token: str, owner: str, repo: str, pr_number: int
+) -> str:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3.diff",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+    async with session.get(url, headers=headers) as response:
+        await _respect_rate_limit(response)
+        text = await response.text()
+        if response.status in {403, 429, 500, 502, 503, 504}:
+            raise RuntimeError(
+                f"Diff request failed ({response.status}): {text[:300]}"
+            )
+        if response.status >= 400:
+            raise RuntimeError(
+                f"Diff request failed ({response.status}): {text[:300]}"
+            )
+        return text
 
 
 async def collect_peek(token: str) -> dict[str, Any]:
@@ -133,11 +186,14 @@ async def collect_peek(token: str) -> dict[str, Any]:
 
         selected_issue = None
         selected_pr = None
+        closing_pr_confidence = "unknown"
         for issue in issues:
-            pr = _extract_merged_pr(issue)
-            if pr:
+            match = _extract_merged_pr(issue)
+            if match:
+                pr, confidence = match
                 selected_issue = issue
                 selected_pr = pr
+                closing_pr_confidence = confidence
                 break
 
         if not selected_issue or not selected_pr:
@@ -147,7 +203,10 @@ async def collect_peek(token: str) -> dict[str, Any]:
 
         pr_number = int(selected_pr["number"])
         pr_vars = {"owner": OWNER, "repo": REPO, "number": pr_number}
-        pr_data = await _graphql(session, token, PR_DETAILS_QUERY, pr_vars)
+        pr_data, diff = await asyncio.gather(
+            _graphql(session, token, PR_DETAILS_QUERY, pr_vars),
+            _fetch_diff(session, token, OWNER, REPO, pr_number),
+        )
         pr_details = pr_data["repository"]["pullRequest"]
 
         labels = [
@@ -160,6 +219,10 @@ async def collect_peek(token: str) -> dict[str, Any]:
             for node in pr_details.get("files", {}).get("nodes", [])
             if node.get("path")
         ]
+        test_files_changed = [path for path in changed_files if "test" in path.lower()]
+        license_spdx_id = (
+            pr_data["repository"].get("licenseInfo", {}) or {}
+        ).get("spdxId") or "UNKNOWN"
 
         return {
             "request_example": {
@@ -171,16 +234,25 @@ async def collect_peek(token: str) -> dict[str, Any]:
                 "repo": f"{OWNER}/{REPO}",
                 "issue_number": selected_issue["number"],
                 "issue_title": selected_issue.get("title", ""),
-                "issue_body_preview": (selected_issue.get("body") or "")[:400],
+                "issue_body": selected_issue.get("body") or "",
                 "issue_labels": labels,
-                "issue_created": selected_issue.get("createdAt", ""),
+                "issue_created_at": selected_issue.get("createdAt", ""),
                 "pr_number": pr_details["number"],
                 "pr_title": pr_details.get("title", ""),
-                "pr_body_preview": (pr_details.get("body") or "")[:400],
-                "merged_at": pr_details.get("mergedAt", ""),
+                "pr_body": pr_details.get("body") or "",
+                "pr_merged_at": pr_details.get("mergedAt", ""),
                 "review_count": pr_details.get("reviews", {}).get("totalCount", 0),
-                "changed_files_count": pr_details.get("files", {}).get("totalCount", 0),
-                "changed_files_sample": changed_files[:20],
-                "note": "Peek mode does not fetch or store diff text.",
+                "additions": pr_details.get("additions", 0),
+                "deletions": pr_details.get("deletions", 0),
+                "base_sha": pr_details.get("baseRefOid") or "",
+                "merge_sha": (pr_details.get("mergeCommit") or {}).get("oid") or "",
+                "base_branch": pr_details.get("baseRefName") or "",
+                "closing_pr_confidence": closing_pr_confidence,
+                "diff": diff,
+                "has_tests": len(test_files_changed) > 0,
+                "test_files_changed": test_files_changed,
+                "changed_files": changed_files,
+                "license": license_spdx_id,
+                "collected_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             },
         }

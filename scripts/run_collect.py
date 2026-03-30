@@ -37,7 +37,7 @@ async def _run(repo_arg: str | None) -> None:
     manifest = Manifest(data_dir / "manifest.json")
 
     targets = _targets(repo_arg)
-    print("Manifest: ", manifest)
+    print("Manifest: ", manifest.path)
     print("Targets: ", targets)
     timeout = aiohttp.ClientTimeout(total=120)
     async with aiohttp.ClientSession(timeout=timeout) as session:

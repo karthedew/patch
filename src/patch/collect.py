@@ -20,6 +20,11 @@ GITHUB_GRAPHQL = "https://api.github.com/graphql"
 
 COLLECT_QUERY = """
 query CollectIssues($owner: String!, $repo: String!, $first: Int!, $after: String) {
+  rateLimit {
+    cost
+    remaining
+    resetAt
+  }
   repository(owner: $owner, name: $repo) {
     licenseInfo { spdxId }
     issues(first: $first, after: $after, states: CLOSED, orderBy: { field: CREATED_AT, direction: DESC }) {
@@ -82,6 +87,38 @@ class RetryableGitHubError(RuntimeError):
     pass
 
 
+def _is_rate_limited_error(errors: list[dict[str, Any]]) -> bool:
+    for error in errors:
+        if error.get("type") == "RATE_LIMITED":
+            return True
+        message = str(error.get("message") or "").lower()
+        if "rate limit" in message:
+            return True
+    return False
+
+
+def _parse_reset_at(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return int(dt.timestamp())
+
+
+async def _sleep_with_state(
+    sleep_for: int, reason: str, stats: dict | None = None
+) -> None:
+    if sleep_for <= 0:
+        return
+    if stats is not None:
+        stats["state"] = f"sleeping {sleep_for}s ({reason})"
+    await asyncio.sleep(sleep_for)
+    if stats is not None:
+        stats["state"] = "calling"
+
+
 def _headers(
     token: str, *, accept: str = "application/vnd.github+json"
 ) -> dict[str, str]:
@@ -98,11 +135,7 @@ async def respect_rate_limit(
     retry_after = response.headers.get("Retry-After")
     if retry_after is not None:
         sleep_for = int(retry_after) + 1
-        if stats is not None:
-            stats["state"] = f"sleeping {sleep_for}s (secondary limit)"
-        await asyncio.sleep(sleep_for)
-        if stats is not None:
-            stats["state"] = "calling"
+        await _sleep_with_state(sleep_for, "secondary limit", stats)
         return
 
     remaining = int(response.headers.get("X-RateLimit-Remaining", "100"))
@@ -111,11 +144,24 @@ async def respect_rate_limit(
 
     reset_at = int(response.headers.get("X-RateLimit-Reset", "0"))
     sleep_for = max(0, reset_at - int(time.time())) + 2
-    if stats is not None:
-        stats["state"] = f"sleeping {sleep_for}s (rate limit)"
-    await asyncio.sleep(sleep_for)
-    if stats is not None:
-        stats["state"] = "calling"
+    await _sleep_with_state(sleep_for, "rate limit", stats)
+
+
+async def _respect_graphql_budget(
+    data: dict[str, Any], stats: dict | None = None
+) -> None:
+    rate_limit = data.get("rateLimit")
+    if not isinstance(rate_limit, dict):
+        return
+
+    cost = int(rate_limit.get("cost") or 0)
+    remaining = int(rate_limit.get("remaining") or 0)
+    if remaining > max(1, cost):
+        return
+
+    reset_at = _parse_reset_at(rate_limit.get("resetAt"))
+    sleep_for = 60 if reset_at is None else max(0, reset_at - int(time.time())) + 2
+    await _sleep_with_state(sleep_for, "graphql budget", stats)
 
 
 @retry(wait=wait_exponential(min=1, max=60), stop=stop_after_attempt(5), reraise=True)
@@ -149,7 +195,19 @@ async def _graphql(
             )
         data = orjson.loads(text)
         if "errors" in data:
+            errors = data["errors"]
+            if _is_rate_limited_error(errors):
+                retry_after = response.headers.get("Retry-After")
+                if retry_after is not None:
+                    sleep_for = int(retry_after) + 1
+                else:
+                    reset_at = int(response.headers.get("X-RateLimit-Reset", "0") or 0)
+                    sleep_for = (
+                        max(0, reset_at - int(time.time())) + 2 if reset_at else 60
+                    )
+                await _sleep_with_state(sleep_for, "graphql rate limit", stats)
             raise RetryableGitHubError(f"GraphQL errors: {data['errors']}")
+        await _respect_graphql_budget(data.get("data") or {}, stats)
         await asyncio.sleep(1)
         return data["data"]
 

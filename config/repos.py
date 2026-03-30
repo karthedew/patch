@@ -15,7 +15,7 @@ class RepoConfig:
 
 REPOS = [
     # Python - Web
-    RepoConfig("tiangolo", "fastapi", "python", "web"),
+    RepoConfig("fastapi", "fastapi", "python", "web"),
     RepoConfig("django", "django", "python", "web"),
     RepoConfig("pallets", "flask", "python", "web"),
     # Python - Data Engineering

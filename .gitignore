@@ -5,6 +5,8 @@ __pycache__/
 .ruff_cache/
 .DS_Store
 data/raw/*.jsonl
+data/raw/*.errors.jsonl
 data/processed/*.jsonl
-data/hf_upload/train.jsonl
-data/hf_upload/test.jsonl
+data/hf_upload/train.parquet
+data/hf_upload/test.parquet
+dist/

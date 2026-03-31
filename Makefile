@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help sync init-env collect collect-repo peek process process-repo merge push pipeline check
+.PHONY: help sync init-env collect collect-repo peek process process-repo merge push publish pipeline check
 
 help:
 	@printf "Available targets:\n"
@@ -13,6 +13,7 @@ help:
 	@printf "  make process-repo - Process one repo (usage: make process-repo REPO=owner/repo)\n"
 	@printf "  make merge        - Merge processed files and write train/test split\n"
 	@printf "  make push         - Push train/test dataset to HuggingFace\n"
+	@printf "  make publish      - Build and publish package to PyPI\n"
 	@printf "  make pipeline     - Run collect, process, merge, then push\n"
 	@printf "  make check        - Compile Python files for a quick syntax check\n"
 
@@ -54,6 +55,10 @@ merge:
 
 push:
 	uv run patch-sft push
+
+publish:
+	uv build
+	uv publish
 
 pipeline: collect process merge push
 

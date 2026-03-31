@@ -1,165 +1,200 @@
-# patch
+# patch-sft
 
-`patch` is a Python pipeline for building supervised fine-tuning (SFT) datasets from real GitHub engineering history.
+`patch-sft` is a Python pipeline for building supervised fine-tuning (SFT) datasets from real GitHub engineering history.
 
 It collects closed GitHub issues and linked merged pull requests, extracts unified diffs, applies quality filters, formats examples into `messages[]` chat records, and publishes train/test splits to Hugging Face.
 
-## What this project does
+## Using the published dataset
 
-- Collects issue -> merged PR pairs from curated open-source repositories
-- Fetches review counts, changed files, and unified diffs
-- Applies quality filters to keep focused, learnable examples
-- Formats output for ChatML-style instruction fine-tuning
-- Merges and splits into deterministic `train.jsonl` / `test.jsonl`
-- Pushes a `DatasetDict` to Hugging Face Hub
+If you just want the pre-built dataset, no GitHub token or local pipeline needed:
 
-## Project layout
+```python
+import patch
 
-```text
-patch/
-├── pyproject.toml
-├── .env.example
-├── Makefile
-├── config/
-│   └── repos.py
-├── src/
-│   └── patch/
-│       ├── collect.py
-│       ├── process.py
-│       ├── merge.py
-│       ├── push.py
-│       ├── peek.py
-│       ├── manifest.py
-│       └── filters.py
-├── data/
-│   ├── raw/
-│   ├── processed/
-│   └── hf_upload/
-└── scripts/
-    ├── run_collect.py
-    ├── run_process.py
-    ├── run_merge.py
-    ├── run_push.py
-    └── run_peek.py
+ds = patch.load("your-hf-username/patch-sft")
+print(ds)
+# DatasetDict({
+#     train: Dataset({...}),
+#     test:  Dataset({...}),
+# })
+
+df = ds["train"].to_pandas()
 ```
 
-## Requirements
+Or install and use it as a dependency in another project:
+
+```toml
+# pyproject.toml
+dependencies = ["patch-sft>=0.1.0"]
+```
+
+```python
+import patch
+
+# Download from HuggingFace Hub
+ds = patch.load("your-hf-username/patch-sft")
+
+# Train split only
+train_ds = patch.load("your-hf-username/patch-sft", split="train")
+```
+
+## Running your own collection
+
+To collect from GitHub and build your own dataset:
+
+### Requirements
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/)
-- GitHub token with API access
-- Hugging Face account/token (or CLI login)
+- GitHub personal access token
+- Hugging Face account/token (for pushing)
 
-## Setup
+### Setup
 
 ```bash
+git clone https://github.com/your-username/patch-sft
+cd patch-sft
 make sync
 make init-env
 ```
 
-Then edit `.env` with your values:
-
-- `GITHUB_TOKEN`
-- `HF_REPO_ID`
-- `HF_TOKEN` (optional if using `hf auth login`)
-- `DATA_DIR` (optional, defaults to `./data`)
-
-## Run the pipeline
-
-### All repos
+Edit `.env` with your values:
 
 ```bash
+GITHUB_TOKEN=ghp_...        # required for collection
+HF_REPO_ID=yourname/patch-sft
+HF_TOKEN=hf_...             # optional if using `huggingface-cli login`
+DATA_DIR=./data             # optional, defaults to ./data
+PYPI_API_TOKEN=pypi-...     # only needed for `make publish`
+```
+
+### Run the pipeline
+
+```bash
+# All repos
 make collect
 make process
 make merge
 make push
-```
 
-### Single repo
-
-```bash
+# Single repo
 make collect-repo REPO=apache/arrow
 make process-repo REPO=apache/arrow
-```
 
-### One-command full run
-
-```bash
+# Full pipeline in one shot
 make pipeline
 ```
 
-## Peek mode (GraphQL preview)
+### Programmatic collection
 
-Use `peek` when you want to inspect GraphQL request structure and one sample issue/PR result without writing files.
+```python
+import patch
+from patch import RepoConfig
+
+patch.collect(
+    repos=[
+        RepoConfig("apache", "arrow", "python", "data-engineering"),
+        RepoConfig("fastapi", "fastapi", "python", "web"),
+    ],
+    token="ghp_...",      # or set GITHUB_TOKEN env var
+    data_dir="./data",
+)
+```
+
+### CLI
+
+After installation, the `patch-sft` command is available:
+
+```bash
+patch-sft collect [--repo owner/repo]
+patch-sft process [--repo owner/repo]
+patch-sft merge
+patch-sft push
+patch-sft peek
+```
+
+### Peek mode
+
+Preview GraphQL request structure and one sample record without writing any files:
 
 ```bash
 make peek
+# or
+patch-sft peek
 ```
 
-- Hardcoded target: `pola-rs/polars`
-- Prints a request example plus a sample normalized record to stdout
-- Does not write dataset data to disk
-- Includes full issue body, full PR body, changed files, and unified diff text in the sample
+Hardcoded target is `pola-rs/polars`. Prints a request example and a normalized sample record to stdout.
+
+## Project layout
+
+```text
+patch-sft/
+├── pyproject.toml
+├── .env.example
+├── Makefile
+├── src/
+│   └── patch/
+│       ├── __init__.py     # public API: collect(), load(), RepoConfig, REPOS
+│       ├── cli.py          # patch-sft CLI entry point
+│       ├── repos.py        # curated repo list and RepoConfig
+│       ├── collect.py      # GitHub GraphQL + REST collection
+│       ├── process.py      # quality filters and SFT formatting
+│       ├── merge.py        # train/test split → Parquet
+│       ├── push.py         # HuggingFace Hub upload
+│       ├── peek.py         # single-sample GraphQL preview
+│       ├── manifest.py     # per-repo progress tracking
+│       └── filters.py      # record quality filters
+└── data/
+    ├── raw/                # per-repo JSONL (append-only)
+    ├── processed/          # filtered and formatted JSONL
+    └── hf_upload/          # train.parquet / test.parquet
+```
 
 ## Output formats
 
 ### Raw record (`data/raw/*.jsonl`)
 
-Each line is a JSON object with fields such as:
+Each line is a JSON object:
 
 - `repo`, `language`, `domain`, `license`, `collected_at`
 - `issue_number`, `issue_title`, `issue_body`, `issue_labels`, `issue_created_at`
 - `pr_number`, `pr_title`, `pr_body`, `pr_merged_at`, `base_branch`, `base_sha`, `merge_sha`, `closing_pr_confidence`
 - `diff`, `review_count`, `changed_files`, `additions`, `deletions`, `has_tests`, `test_files_changed`
 
+Failed diff fetches are written to `data/raw/*.errors.jsonl` and retried automatically on the next run.
+
 ### Processed record (`data/processed/*.jsonl`)
 
-Each line is formatted for instruction SFT:
+Formatted for instruction SFT:
 
-- `messages`: `system`, `user`, `assistant`
-- `metadata`: repo/language/domain identifiers plus issue/pr and provenance fields
+- `messages`: `[{role: system}, {role: user}, {role: assistant}]`
+- `metadata`: repo/language/domain identifiers plus issue/PR provenance fields
 
-### HF upload files (`data/hf_upload/`)
+### HF upload (`data/hf_upload/`)
 
-- `train.jsonl`
-- `test.jsonl`
+- `train.parquet`
+- `test.parquet`
 
 ## Quality filters
 
 Records are kept only if they pass all checks:
 
-- issue body length >= 100 chars
-- changed diff lines between 5 and 500
-- review count >= 1
-- changed files <= 10
+- Issue body length ≥ 100 characters
+- Changed diff lines between 5 and 500
+- At least 1 PR review
+- Changed files ≤ 10
 
-## Resumability and invariants
+## Resumability
 
-- `data/raw/` is append-only
-- collection is safe to re-run and deduplicates by issue number
-- `data/manifest.json` is the source of truth for per-repo progress
-- manifest writes are flushed during collection for crash safety
-- each stage runs independently from files on disk
+- `data/raw/` is append-only; collection deduplicates by issue number
+- `data/manifest.json` tracks per-repo progress and is flushed during collection
+- Each pipeline stage is independent and reads from files on disk
+- Re-running collection is safe — already-collected issues are skipped
 
-## Authentication notes
-
-### GitHub
-
-- `GITHUB_TOKEN` is required for collection and peek commands
-
-### Hugging Face
-
-Push supports either auth path:
-
-1. Set `HF_TOKEN` in `.env`, or
-2. Run `hf auth login` and use cached CLI credentials
-
-## Helpful targets
+## Publishing to PyPI
 
 ```bash
-make help
-make check
+make publish
 ```
 
-- `make help`: list all available commands
-- `make check`: compile Python files for quick syntax validation
+Requires `~/.pypirc` with a valid PyPI token (username `__token__`, password `pypi-...`), or `PYPI_API_TOKEN` set in your environment.

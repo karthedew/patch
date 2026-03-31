@@ -57,6 +57,7 @@ push:
 	uv run patch-sft push
 
 publish:
+	rm -rf dist/
 	uv build
 	uv publish
 

@@ -2,9 +2,9 @@
   "apache/airflow": {
     "complete": false,
     "last_issue_number": 64358,
-    "last_run": "2026-03-31T02:22:38.924014Z",
+    "last_run": "2026-03-31T04:24:08.376961Z",
     "processed_count": 0,
-    "raw_count": 4645
+    "raw_count": 4648
   },
   "apache/arrow": {
     "complete": false,

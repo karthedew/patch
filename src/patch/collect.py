@@ -588,6 +588,8 @@ def _ansi(code: str, s: str) -> str:
 def _state_color(state: str) -> str:
     if state.startswith("sleeping"):
         return "33"   # yellow
+    if state == "done":
+        return "34"   # blue
     if state == "writing":
         return "34"   # blue
     if state == "calling":
@@ -834,6 +836,7 @@ async def collect_repo(
 
         cursor = page_info.get("endCursor")
 
+    stats["state"] = "done"
     stop_display.set()
     await display_task
 

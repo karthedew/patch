@@ -5,13 +5,23 @@ from pathlib import Path
 import random
 
 import orjson
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 
-def _append_jsonl(path: Path, records: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "ab") as handle:
-        for record in records:
-            handle.write(orjson.dumps(record) + b"\n")
+def _records_to_table(records: list[dict]) -> pa.Table:
+    if not records:
+        return pa.table({})
+
+    # Flatten: top-level keys + metadata sub-keys become columns
+    rows: dict[str, list] = {}
+    for record in records:
+        meta = record.get("metadata", {})
+        flat = {**{k: v for k, v in record.items() if k != "metadata"}, **meta}
+        for key, val in flat.items():
+            rows.setdefault(key, []).append(val)
+
+    return pa.Table.from_pydict(rows)
 
 
 def merge_and_split(
@@ -37,18 +47,19 @@ def merge_and_split(
     test_records = all_records[split:]
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    train_path = output_dir / "train.jsonl"
-    test_path = output_dir / "test.jsonl"
-    if train_path.exists():
-        train_path.unlink()
-    if test_path.exists():
-        test_path.unlink()
 
-    _append_jsonl(train_path, train_records)
-    _append_jsonl(test_path, test_records)
+    for name, records in [("train", train_records), ("test", test_records)]:
+        path = output_dir / f"{name}.parquet"
+        if path.exists():
+            path.unlink()
+        pq.write_table(
+            _records_to_table(records),
+            path,
+            compression="zstd",
+        )
 
-    language_counts = Counter()
-    domain_counts = Counter()
+    language_counts: Counter = Counter()
+    domain_counts: Counter = Counter()
     for record in all_records:
         meta = record.get("metadata", {})
         language_counts[meta.get("language", "unknown")] += 1

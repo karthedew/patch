@@ -6,7 +6,7 @@ help:
 	@printf "Available targets:\n"
 	@printf "  make sync         - Install project dependencies with uv\n"
 	@printf "  make init-env     - Create .env from .env.example (if missing)\n"
-	@printf "  make collect      - Collect all repos from config/repos.py\n"
+	@printf "  make collect      - Collect all repos\n"
 	@printf "  make collect-repo - Collect one repo (usage: make collect-repo REPO=owner/repo)\n"
 	@printf "  make peek         - GraphQL one-sample preview from pola-rs/polars (no file writes)\n"
 	@printf "  make process      - Process all raw files into messages[]\n"
@@ -27,35 +27,35 @@ init-env:
 	fi
 
 collect:
-	uv run python scripts/run_collect.py
+	uv run patch-sft collect
 
 collect-repo:
 	@if [ -z "$(REPO)" ]; then \
 		printf "Usage: make collect-repo REPO=owner/repo\n"; \
 		exit 1; \
 	fi
-	uv run python scripts/run_collect.py --repo $(REPO)
+	uv run patch-sft collect --repo $(REPO)
 
 peek:
-	uv run python scripts/run_peek.py
+	uv run patch-sft peek
 
 process:
-	uv run python scripts/run_process.py
+	uv run patch-sft process
 
 process-repo:
 	@if [ -z "$(REPO)" ]; then \
 		printf "Usage: make process-repo REPO=owner/repo\n"; \
 		exit 1; \
 	fi
-	uv run python scripts/run_process.py --repo $(REPO)
+	uv run patch-sft process --repo $(REPO)
 
 merge:
-	uv run python scripts/run_merge.py
+	uv run patch-sft merge
 
 push:
-	uv run python scripts/run_push.py
+	uv run patch-sft push
 
 pipeline: collect process merge push
 
 check:
-	python3 -m compileall src scripts config
+	python3 -m compileall src

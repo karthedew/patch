@@ -4,8 +4,8 @@ from pathlib import Path
 
 import orjson
 
-from config.repos import RepoConfig
-from .filters import passes_filters
+from patch.repos import RepoConfig
+from patch.filters import passes_filters
 
 SYSTEM_PROMPT = (
     "You are an expert software engineer. Given a GitHub issue and repository "

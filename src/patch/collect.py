@@ -10,9 +10,9 @@ from typing import Any
 import aiofiles
 import aiohttp
 import orjson
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from config.repos import RepoConfig
+from patch.repos import RepoConfig
 from .manifest import Manifest
 
 GITHUB_API = "https://api.github.com"
@@ -84,6 +84,11 @@ query CollectIssues($owner: String!, $repo: String!, $first: Int!, $after: Strin
 
 
 class RetryableGitHubError(RuntimeError):
+    pass
+
+
+class TooManyFilesError(RuntimeError):
+    """GitHub refused the diff because the PR has >300 files changed."""
     pass
 
 
@@ -208,7 +213,6 @@ async def _graphql(
                 await _sleep_with_state(sleep_for, "graphql rate limit", stats)
             raise RetryableGitHubError(f"GraphQL errors: {data['errors']}")
         await _respect_graphql_budget(data.get("data") or {}, stats)
-        await asyncio.sleep(1)
         return data["data"]
 
 
@@ -233,8 +237,178 @@ async def get_text(
                 f"GitHub API error {response.status} for {url}: {text[:200]}"
             )
         text = await response.text()
-        await asyncio.sleep(1)
         return text
+
+
+@retry(
+    retry=retry_if_exception_type(RetryableGitHubError),
+    wait=wait_exponential(min=1, max=60),
+    stop=stop_after_attempt(5),
+    reraise=True,
+)
+async def _get_pr_diff_direct(
+    session: aiohttp.ClientSession,
+    url: str,
+    token: str,
+    stats: dict | None = None,
+) -> str:
+    async with session.get(
+        url, headers=_headers(token, accept="application/vnd.github.v3.diff")
+    ) as response:
+        await respect_rate_limit(response, stats)
+        if stats is not None:
+            stats["api_calls"] += 1
+        text = await response.text()
+        if response.status == 406:
+            raise TooManyFilesError(f"Diff exceeds 300-file limit for {url}")
+        if response.status == 404:
+            raise FileNotFoundError(f"PR not found (404) for {url}")
+        if response.status in {403, 429, 500, 502, 503, 504}:
+            raise RetryableGitHubError(f"Retryable status {response.status} for {url}")
+        if response.status >= 400:
+            raise RuntimeError(f"GitHub API error {response.status} for {url}: {text[:200]}")
+        return text
+
+
+@retry(
+    retry=retry_if_exception_type(RetryableGitHubError),
+    wait=wait_exponential(min=1, max=60),
+    stop=stop_after_attempt(5),
+    reraise=True,
+)
+async def _get_compare_diff(
+    session: aiohttp.ClientSession,
+    owner: str,
+    repo: str,
+    base_sha: str,
+    head_sha: str,
+    token: str,
+    stats: dict | None = None,
+) -> str:
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
+    async with session.get(
+        url, headers=_headers(token, accept="application/vnd.github.v3.diff")
+    ) as response:
+        await respect_rate_limit(response, stats)
+        if stats is not None:
+            stats["api_calls"] += 1
+        text = await response.text()
+        if response.status == 406:
+            raise TooManyFilesError(f"Compare diff exceeds 300-file limit for {url}")
+        if response.status in {403, 429, 500, 502, 503, 504}:
+            raise RetryableGitHubError(f"Retryable status {response.status} for {url}")
+        if response.status >= 400:
+            raise RuntimeError(f"GitHub API error {response.status} for {url}: {text[:200]}")
+        return text
+
+
+@retry(
+    retry=retry_if_exception_type(RetryableGitHubError),
+    wait=wait_exponential(min=1, max=60),
+    stop=stop_after_attempt(5),
+    reraise=True,
+)
+async def _get_files_page(
+    session: aiohttp.ClientSession,
+    url: str,
+    token: str,
+    stats: dict | None = None,
+) -> list[dict]:
+    async with session.get(url, headers=_headers(token)) as response:
+        await respect_rate_limit(response, stats)
+        if stats is not None:
+            stats["api_calls"] += 1
+        if response.status in {403, 429, 500, 502, 503, 504}:
+            raise RetryableGitHubError(f"Retryable status {response.status} for {url}")
+        if response.status >= 400:
+            text = await response.text()
+            raise RuntimeError(f"GitHub API error {response.status} for {url}: {text[:200]}")
+        return orjson.loads(await response.text())
+
+
+async def _get_diff_via_files_api(
+    session: aiohttp.ClientSession,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    token: str,
+    stats: dict | None = None,
+) -> str:
+    """Reconstruct a unified diff from the pull request files API (handles >300 files)."""
+    parts: list[str] = []
+    page = 1
+    while True:
+        url = (
+            f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{pr_number}/files"
+            f"?per_page=100&page={page}"
+        )
+        files = await _get_files_page(session, url, token, stats)
+
+        for f in files:
+            filename = f.get("filename", "")
+            previous_filename = f.get("previous_filename", filename)
+            status = f.get("status", "")
+            patch = f.get("patch")
+
+            if status == "renamed":
+                parts.append(f"diff --git a/{previous_filename} b/{filename}")
+                parts.append(f"--- a/{previous_filename}")
+                parts.append(f"+++ b/{filename}")
+            elif status == "added":
+                parts.append(f"diff --git a/{filename} b/{filename}")
+                parts.append("--- /dev/null")
+                parts.append(f"+++ b/{filename}")
+            elif status == "removed":
+                parts.append(f"diff --git a/{filename} b/{filename}")
+                parts.append(f"--- a/{filename}")
+                parts.append("+++ /dev/null")
+            else:
+                parts.append(f"diff --git a/{filename} b/{filename}")
+                parts.append(f"--- a/{filename}")
+                parts.append(f"+++ b/{filename}")
+
+            if patch:
+                parts.append(patch)
+
+        if len(files) < 100:
+            break
+        page += 1
+        await asyncio.sleep(1)
+
+    return "\n".join(parts)
+
+
+async def get_pr_diff(
+    session: aiohttp.ClientSession,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    token: str,
+    stats: dict | None = None,
+    *,
+    base_sha: str = "",
+    merge_sha: str = "",
+) -> str:
+    """Fetch a PR diff with automatic fallbacks for large PRs and 404s."""
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{pr_number}"
+    try:
+        return await _get_pr_diff_direct(session, url, token, stats)
+    except TooManyFilesError:
+        # >300 files: rebuild diff from the paginated files API
+        return await _get_diff_via_files_api(session, owner, repo, pr_number, token, stats)
+    except FileNotFoundError:
+        # PR endpoint 404s: try the compare endpoint using SHAs from GraphQL
+        if not base_sha or not merge_sha:
+            raise
+        try:
+            return await _get_compare_diff(
+                session, owner, repo, base_sha, merge_sha, token, stats
+            )
+        except TooManyFilesError:
+            # compare also hit the limit; fall back to files API
+            return await _get_diff_via_files_api(
+                session, owner, repo, pr_number, token, stats
+            )
 
 
 async def _load_existing_issue_numbers(path: Path) -> set[int]:
@@ -258,6 +432,72 @@ async def _append_jsonl(path: Path, record: dict, write_lock: asyncio.Lock) -> N
     async with write_lock:
         async with aiofiles.open(path, "ab") as handle:
             await handle.write(orjson.dumps(record) + b"\n")
+
+
+async def _load_error_file(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    records: list[dict] = []
+    async with aiofiles.open(path, "rb") as handle:
+        async for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(orjson.loads(line))
+            except Exception:
+                pass
+    return records
+
+
+async def _write_error_file(path: Path, records: list[dict]) -> None:
+    async with aiofiles.open(path, "wb") as handle:
+        for record in records:
+            await handle.write(orjson.dumps(record) + b"\n")
+
+
+def _make_error_record(
+    cfg: RepoConfig,
+    issue: dict[str, Any],
+    pr: dict[str, Any],
+    confidence: str,
+    license_spdx_id: str,
+    exc: Exception,
+) -> dict[str, Any]:
+    if isinstance(exc, FileNotFoundError):
+        error_type = "not_found"
+    else:
+        msg = str(exc).lower()
+        if "too many" in msg or "maximum number of files" in msg:
+            error_type = "too_many_files"
+        elif "maximum number of lines" in msg:
+            error_type = "too_many_lines"
+        elif "decode" in msg or "encoding" in msg or "codec" in msg:
+            error_type = "encoding_error"
+        else:
+            error_type = "other"
+
+    pruned_issue = {
+        "number": issue.get("number"),
+        "title": issue.get("title") or "",
+        "body": issue.get("body") or "",
+        "createdAt": issue.get("createdAt") or "",
+        "labels": issue.get("labels") or {"nodes": []},
+    }
+    return {
+        "repo": cfg.full_name,
+        "issue_number": int(issue["number"]),
+        "pr_number": int(pr["number"]),
+        "error_type": error_type,
+        "error_message": str(exc)[:500],
+        "base_sha": pr.get("baseRefOid") or "",
+        "merge_sha": (pr.get("mergeCommit") or {}).get("oid") or "",
+        "confidence": confidence,
+        "license_spdx_id": license_spdx_id,
+        "issue": pruned_issue,
+        "pr": pr,
+        "failed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
 
 
 def _extract_pr_from_issue(issue: dict[str, Any]) -> tuple[dict[str, Any], str] | None:
@@ -444,8 +684,10 @@ async def collect_repo(
 ) -> dict[str, int]:
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{cfg.owner}-{cfg.repo}-{cfg.language}.jsonl"
+    error_path = output_dir / f"{cfg.owner}-{cfg.repo}-{cfg.language}.errors.jsonl"
 
     write_lock = asyncio.Lock()
+    error_lock = asyncio.Lock()
     stats: dict = {
         "written": 0, "skipped": 0, "failed": 0, "api_calls": 0, "state": "starting"
     }
@@ -457,6 +699,54 @@ async def collect_repo(
     since_issue = manifest.get_last_issue(cfg) if repo_state.get("complete", False) else 0
     seen_issues = await _load_existing_issue_numbers(out_path)
 
+    # ── retry pass: re-attempt "too_many_files" errors from previous runs ────
+    existing_errors = await _load_error_file(error_path)
+    retryable = [e for e in existing_errors if e.get("error_type") == "too_many_files"]
+    kept_errors: list[dict] = [e for e in existing_errors if e.get("error_type") != "too_many_files"]
+    retry_license: str = "UNKNOWN"
+
+    for err_rec in retryable:
+        issue_number = err_rec.get("issue_number")
+        pr_number = err_rec.get("pr_number")
+        if issue_number in seen_issues or not pr_number:
+            kept_errors.append(err_rec)
+            continue
+
+        stats["state"] = f"retrying diff #{pr_number}"
+        try:
+            diff = await get_pr_diff(
+                session,
+                cfg.owner,
+                cfg.repo,
+                pr_number,
+                token,
+                stats,
+                base_sha=err_rec.get("base_sha", ""),
+                merge_sha=err_rec.get("merge_sha", ""),
+            )
+        except Exception as exc:
+            err_rec["last_retry_error"] = str(exc)[:500]
+            kept_errors.append(err_rec)
+            stats["failed"] += 1
+            continue
+
+        retry_license = err_rec.get("license_spdx_id", "UNKNOWN")
+        record = _build_record(
+            cfg,
+            err_rec["issue"],
+            err_rec["pr"],
+            err_rec.get("confidence", ""),
+            diff,
+            retry_license,
+        )
+        stats["state"] = "writing"
+        await _append_jsonl(out_path, record, write_lock)
+        seen_issues.add(issue_number)
+        stats["written"] += 1
+
+    await _write_error_file(error_path, kept_errors)
+
+    # ── main collection loop ──────────────────────────────────────────────────
     license_spdx_id = "UNKNOWN"
     cursor: str | None = None
     done = False
@@ -502,20 +792,24 @@ async def collect_repo(
             pr, confidence = pr_match
             pr_number = int(pr["number"])
 
+            base_sha = pr.get("baseRefOid") or ""
+            merge_sha = (pr.get("mergeCommit") or {}).get("oid") or ""
+
             stats["state"] = f"fetching diff #{pr_number}"
             try:
-                diff = await get_text(
+                diff = await get_pr_diff(
                     session,
-                    f"{GITHUB_API}/repos/{cfg.owner}/{cfg.repo}/pulls/{pr_number}",
-                    token=token,
-                    accept="application/vnd.github.v3.diff",
-                    stats=stats,
+                    cfg.owner,
+                    cfg.repo,
+                    pr_number,
+                    token,
+                    stats,
+                    base_sha=base_sha,
+                    merge_sha=merge_sha,
                 )
             except Exception as exc:
-                print(
-                    f"\n[{cfg.full_name}] issue {issue_number} diff failed: {exc}",
-                    flush=True,
-                )
+                err_rec = _make_error_record(cfg, issue, pr, confidence, license_spdx_id, exc)
+                await _append_jsonl(error_path, err_rec, error_lock)
                 stats["failed"] += 1
                 continue
 

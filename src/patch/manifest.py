@@ -9,7 +9,7 @@ from typing import Any
 
 import fcntl
 
-from config.repos import RepoConfig
+from patch.repos import RepoConfig
 
 
 class Manifest:

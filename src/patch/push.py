@@ -33,17 +33,17 @@ GitHub issue to unified diff dataset for supervised fine-tuning.
 
 
 def push_to_hub(hf_upload_dir: Path, repo_id: str, token: str | None = None) -> None:
-    train_path = hf_upload_dir / "train.jsonl"
-    test_path = hf_upload_dir / "test.jsonl"
+    train_path = hf_upload_dir / "train.parquet"
+    test_path = hf_upload_dir / "test.parquet"
     if not train_path.exists() or not test_path.exists():
         raise FileNotFoundError(
-            "Missing train.jsonl or test.jsonl in hf_upload directory"
+            "Missing train.parquet or test.parquet in hf_upload directory"
         )
 
     dataset = DatasetDict(
         {
-            "train": load_dataset("json", data_files=str(train_path))["train"],
-            "test": load_dataset("json", data_files=str(test_path))["train"],
+            "train": load_dataset("parquet", data_files=str(train_path))["train"],
+            "test": load_dataset("parquet", data_files=str(test_path))["train"],
         }
     )
 

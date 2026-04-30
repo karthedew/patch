@@ -1,58 +1,289 @@
 {
-  "apache/airflow": {
-    "complete": false,
-    "last_issue_number": 64358,
-    "last_run": "2026-03-31T04:24:08.376961Z",
+  "actix/actix-web": {
+    "complete": true,
+    "last_issue_number": 3969,
+    "last_run": "2026-04-05T22:02:04.072990Z",
     "processed_count": 0,
-    "raw_count": 4648
+    "raw_count": 255
+  },
+  "apache/airflow": {
+    "complete": true,
+    "last_issue_number": 64632,
+    "last_run": "2026-04-03T03:57:27.278033Z",
+    "processed_count": 0,
+    "raw_count": 4653
   },
   "apache/arrow": {
-    "complete": false,
+    "complete": true,
     "last_issue_number": 49526,
-    "last_run": "2026-03-30T22:36:49.698065Z",
+    "last_run": "2026-04-07T17:08:40.663780Z",
     "processed_count": 0,
-    "raw_count": 2272
+    "raw_count": 0
+  },
+  "apache/arrow-go": {
+    "complete": true,
+    "last_issue_number": 727,
+    "last_run": "2026-04-05T21:04:22.561064Z",
+    "processed_count": 0,
+    "raw_count": 95
+  },
+  "apache/arrow-rs": {
+    "complete": true,
+    "last_issue_number": 9640,
+    "last_run": "2026-04-05T23:11:06.980367Z",
+    "processed_count": 0,
+    "raw_count": 2091
+  },
+  "apache/datafusion": {
+    "complete": true,
+    "last_issue_number": 21311,
+    "last_run": "2026-04-06T02:07:23.032296Z",
+    "processed_count": 0,
+    "raw_count": 4617
   },
   "dask/dask": {
-    "complete": false,
+    "complete": true,
     "last_issue_number": 12298,
-    "last_run": "2026-03-30T23:58:03.363470Z",
+    "last_run": "2026-04-03T03:57:30.786072Z",
     "processed_count": 0,
-    "raw_count": 1693
+    "raw_count": 1723
+  },
+  "delta-io/delta-rs": {
+    "complete": true,
+    "last_issue_number": 4317,
+    "last_run": "2026-04-06T03:02:23.442117Z",
+    "processed_count": 0,
+    "raw_count": 621
   },
   "django/django": {
     "complete": true,
     "last_issue_number": 0,
-    "last_run": "2026-03-31T02:22:32.805101Z",
+    "last_run": "2026-04-03T03:57:22.267426Z",
     "processed_count": 0,
     "raw_count": 0
+  },
+  "duckdb/duckdb": {
+    "complete": true,
+    "last_issue_number": 21876,
+    "last_run": "2026-04-07T20:06:01.595621Z",
+    "processed_count": 0,
+    "raw_count": 1683
+  },
+  "expressjs/express": {
+    "complete": true,
+    "last_issue_number": 6968,
+    "last_run": "2026-04-06T06:02:26.808477Z",
+    "processed_count": 0,
+    "raw_count": 13
   },
   "fastapi/fastapi": {
     "complete": true,
     "last_issue_number": 14680,
-    "last_run": "2026-03-31T02:22:32.303273Z",
+    "last_run": "2026-04-03T03:57:21.766051Z",
     "processed_count": 0,
     "raw_count": 48
+  },
+  "fastify/fastify": {
+    "complete": true,
+    "last_issue_number": 6606,
+    "last_run": "2026-04-06T07:02:42.145707Z",
+    "processed_count": 0,
+    "raw_count": 457
+  },
+  "gin-gonic/gin": {
+    "complete": true,
+    "last_issue_number": 4489,
+    "last_run": "2026-04-03T21:58:57.306240Z",
+    "processed_count": 0,
+    "raw_count": 115
+  },
+  "go-chi/chi": {
+    "complete": true,
+    "last_issue_number": 1021,
+    "last_run": "2026-04-03T21:59:23.859373Z",
+    "processed_count": 0,
+    "raw_count": 27
+  },
+  "golang/go": {
+    "complete": true,
+    "last_issue_number": 57339,
+    "last_run": "2026-04-04T23:00:34.359074Z",
+    "processed_count": 0,
+    "raw_count": 1
+  },
+  "google/leveldb": {
+    "complete": true,
+    "last_issue_number": 623,
+    "last_run": "2026-04-10T05:11:22.854430Z",
+    "processed_count": 0,
+    "raw_count": 3
+  },
+  "great-expectations/great_expectations": {
+    "complete": true,
+    "last_issue_number": 11720,
+    "last_run": "2026-04-03T03:57:35.294507Z",
+    "processed_count": 0,
+    "raw_count": 223
+  },
+  "kubernetes/kubernetes": {
+    "complete": true,
+    "last_issue_number": 138124,
+    "last_run": "2026-04-05T19:01:55.514126Z",
+    "processed_count": 0,
+    "raw_count": 11030
+  },
+  "labstack/echo": {
+    "complete": true,
+    "last_issue_number": 2897,
+    "last_run": "2026-04-03T22:00:43.518088Z",
+    "processed_count": 0,
+    "raw_count": 75
+  },
+  "llvm/llvm-project": {
+    "complete": true,
+    "last_issue_number": 190901,
+    "last_run": "2026-04-10T05:11:06.817703Z",
+    "processed_count": 0,
+    "raw_count": 8837
+  },
+  "matplotlib/matplotlib": {
+    "complete": true,
+    "last_issue_number": 31433,
+    "last_run": "2026-04-03T20:59:45.131413Z",
+    "processed_count": 0,
+    "raw_count": 2553
+  },
+  "microsoft/TypeScript": {
+    "complete": true,
+    "last_issue_number": 63340,
+    "last_run": "2026-04-07T17:08:38.658931Z",
+    "processed_count": 0,
+    "raw_count": 7730
+  },
+  "nestjs/nest": {
+    "complete": true,
+    "last_issue_number": 16229,
+    "last_run": "2026-04-06T18:03:52.006847Z",
+    "processed_count": 0,
+    "raw_count": 33
+  },
+  "nodejs/node": {
+    "complete": true,
+    "last_issue_number": 62540,
+    "last_run": "2026-04-07T02:03:37.891677Z",
+    "processed_count": 0,
+    "raw_count": 1621
+  },
+  "numpy/numpy": {
+    "complete": true,
+    "last_issue_number": 31109,
+    "last_run": "2026-04-03T07:58:39.439064Z",
+    "processed_count": 0,
+    "raw_count": 2481
+  },
+  "opencv/opencv": {
+    "complete": true,
+    "last_issue_number": 28697,
+    "last_run": "2026-04-08T01:08:50.291606Z",
+    "processed_count": 0,
+    "raw_count": 1364
   },
   "pallets/flask": {
     "complete": true,
     "last_issue_number": 5961,
-    "last_run": "2026-03-31T02:22:33.807877Z",
+    "last_run": "2026-04-03T03:57:23.771049Z",
     "processed_count": 0,
     "raw_count": 156
   },
-  "pola-rs/polars": {
-    "complete": false,
-    "last_issue_number": 26924,
-    "last_run": "2026-03-30T03:40:15.736254Z",
+  "pandas-dev/pandas": {
+    "complete": true,
+    "last_issue_number": 64819,
+    "last_run": "2026-04-03T03:57:40.306501Z",
     "processed_count": 0,
-    "raw_count": 76
+    "raw_count": 9477
+  },
+  "pola-rs/polars": {
+    "complete": true,
+    "last_issue_number": 27168,
+    "last_run": "2026-04-06T04:04:14.485608Z",
+    "processed_count": 0,
+    "raw_count": 93
+  },
+  "postgres/postgres": {
+    "complete": true,
+    "last_issue_number": 0,
+    "last_run": "2026-04-07T20:06:02.097122Z",
+    "processed_count": 0,
+    "raw_count": 0
   },
   "prefecthq/prefect": {
-    "complete": false,
-    "last_issue_number": 21084,
-    "last_run": "2026-03-31T01:13:42.809857Z",
+    "complete": true,
+    "last_issue_number": 21401,
+    "last_run": "2026-04-03T03:57:33.290552Z",
     "processed_count": 0,
-    "raw_count": 1281
+    "raw_count": 2297
+  },
+  "prometheus/prometheus": {
+    "complete": true,
+    "last_issue_number": 18412,
+    "last_run": "2026-04-05T21:03:36.477627Z",
+    "processed_count": 0,
+    "raw_count": 1070
+  },
+  "redis/redis": {
+    "complete": true,
+    "last_issue_number": 14895,
+    "last_run": "2026-04-07T22:05:20.380705Z",
+    "processed_count": 0,
+    "raw_count": 507
+  },
+  "scikit-learn/scikit-learn": {
+    "complete": true,
+    "last_issue_number": 33627,
+    "last_run": "2026-04-03T16:58:44.726637Z",
+    "processed_count": 0,
+    "raw_count": 3193
+  },
+  "scipy/scipy": {
+    "complete": true,
+    "last_issue_number": 24943,
+    "last_run": "2026-04-03T12:00:24.080015Z",
+    "processed_count": 0,
+    "raw_count": 3173
+  },
+  "serde-rs/serde": {
+    "complete": true,
+    "last_issue_number": 3033,
+    "last_run": "2026-04-06T04:04:11.980676Z",
+    "processed_count": 0,
+    "raw_count": 221
+  },
+  "sqlalchemy/sqlalchemy": {
+    "complete": true,
+    "last_issue_number": 13132,
+    "last_run": "2026-04-03T03:57:36.298370Z",
+    "processed_count": 0,
+    "raw_count": 15
+  },
+  "tokio-rs/axum": {
+    "complete": true,
+    "last_issue_number": 3658,
+    "last_run": "2026-04-05T22:04:01.312270Z",
+    "processed_count": 0,
+    "raw_count": 262
+  },
+  "tokio-rs/tokio": {
+    "complete": true,
+    "last_issue_number": 7976,
+    "last_run": "2026-04-06T03:07:51.102759Z",
+    "processed_count": 0,
+    "raw_count": 741
+  },
+  "vercel/next.js": {
+    "complete": true,
+    "last_issue_number": 91981,
+    "last_run": "2026-04-06T16:04:08.581689Z",
+    "processed_count": 0,
+    "raw_count": 3716
   }
 }

@@ -25,7 +25,8 @@ query PeekIssues($owner: String!, $repo: String!, $count: Int!) {
         labels(first: 20) {
           nodes { name }
         }
-        timelineItems(first: 50, itemTypes: [CLOSED_EVENT, CROSS_REFERENCED_EVENT]) {
+        timelineItems(last: 100, itemTypes: [CLOSED_EVENT, CROSS_REFERENCED_EVENT]) {
+          totalCount
           nodes {
             __typename
             ... on ClosedEvent {
@@ -36,9 +37,19 @@ query PeekIssues($owner: String!, $repo: String!, $count: Int!) {
                   title
                   mergedAt
                 }
+                ... on Commit {
+                  associatedPullRequests(first: 5) {
+                    nodes {
+                      number
+                      title
+                      mergedAt
+                    }
+                  }
+                }
               }
             }
             ... on CrossReferencedEvent {
+              willCloseTarget
               source {
                 __typename
                 ... on PullRequest {
@@ -73,6 +84,7 @@ query PeekPullRequest($owner: String!, $repo: String!, $number: Int!) {
       baseRefOid
       mergeCommit {
         oid
+        parents(first: 5) { nodes { oid } }
       }
       reviews {
         totalCount
@@ -91,25 +103,54 @@ query PeekPullRequest($owner: String!, $repo: String!, $number: Int!) {
 
 def _extract_merged_pr(issue: dict[str, Any]) -> tuple[dict[str, Any], str] | None:
     timeline_nodes = issue.get("timelineItems", {}).get("nodes", [])
+    candidates: list[tuple[int, int, dict[str, Any], str]] = []
+
     for node in timeline_nodes:
         typename = node.get("__typename")
         if typename == "ClosedEvent":
             closer = node.get("closer")
-            if (
-                closer
-                and closer.get("__typename") == "PullRequest"
-                and closer.get("mergedAt")
-            ):
-                return closer, "direct_close"
+            if not closer:
+                continue
+            closer_type = closer.get("__typename")
+            if closer_type == "PullRequest" and closer.get("mergedAt"):
+                candidates.append((0, int(closer.get("number") or 0), closer, "direct_close"))
+            elif closer_type == "Commit":
+                linked_prs = (
+                    (closer.get("associatedPullRequests") or {}).get("nodes") or []
+                )
+                for pr in linked_prs:
+                    if pr.get("mergedAt"):
+                        candidates.append(
+                            (
+                                1,
+                                int(pr.get("number") or 0),
+                                pr,
+                                "closed_by_commit_associated_pr",
+                            )
+                        )
         if typename == "CrossReferencedEvent":
+            will_close_target = node.get("willCloseTarget")
+            if will_close_target is False:
+                continue
             source = node.get("source")
             if (
                 source
                 and source.get("__typename") == "PullRequest"
                 and source.get("mergedAt")
             ):
-                return source, "cross_reference"
-    return None
+                confidence = (
+                    "cross_reference_closing"
+                    if will_close_target is True
+                    else "cross_reference"
+                )
+                candidates.append((2, int(source.get("number") or 0), source, confidence))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], -item[1]))
+    _, _, pr, confidence = candidates[0]
+    return pr, confidence
 
 
 async def _respect_rate_limit(response: aiohttp.ClientResponse) -> None:
@@ -246,6 +287,13 @@ async def collect_peek(token: str) -> dict[str, Any]:
                 "deletions": pr_details.get("deletions", 0),
                 "base_sha": pr_details.get("baseRefOid") or "",
                 "merge_sha": (pr_details.get("mergeCommit") or {}).get("oid") or "",
+                "merge_parent_shas": [
+                    node["oid"]
+                    for node in (pr_details.get("mergeCommit") or {})
+                    .get("parents", {})
+                    .get("nodes", [])
+                    if node.get("oid")
+                ],
                 "base_branch": pr_details.get("baseRefName") or "",
                 "closing_pr_confidence": closing_pr_confidence,
                 "diff": diff,

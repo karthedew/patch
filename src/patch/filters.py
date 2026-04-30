@@ -23,8 +23,6 @@ def passes_filters(record: dict) -> bool:
         return False
     if changed_lines < 5:
         return False
-    if changed_lines > 500:
-        return False
     if review_count < 1:
         return False
     if len(changed_files) > 10:

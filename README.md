@@ -180,7 +180,7 @@ Formatted for instruction SFT:
 Records are kept only if they pass all checks:
 
 - Issue body length ≥ 100 characters
-- Changed diff lines between 5 and 500
+- Changed diff lines >= 5 (no upper limit)
 - At least 1 PR review
 - Changed files ≤ 10
 

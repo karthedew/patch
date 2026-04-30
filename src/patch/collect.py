@@ -35,7 +35,9 @@ query CollectIssues($owner: String!, $repo: String!, $first: Int!, $after: Strin
         body
         createdAt
         labels(first: 20) { nodes { name } }
-        timelineItems(first: 100, itemTypes: [CLOSED_EVENT, CROSS_REFERENCED_EVENT]) {
+        timelineItems(last: 100, itemTypes: [CLOSED_EVENT, CROSS_REFERENCED_EVENT]) {
+          totalCount
+          pageInfo { hasPreviousPage startCursor }
           nodes {
             __typename
             ... on ClosedEvent {
@@ -50,13 +52,31 @@ query CollectIssues($owner: String!, $repo: String!, $first: Int!, $after: Strin
                   deletions
                   baseRefName
                   baseRefOid
-                  mergeCommit { oid }
+                  mergeCommit { oid parents(first: 5) { nodes { oid } } }
                   reviews(first: 1) { totalCount }
                   files(first: 100) { nodes { path } }
+                }
+                ... on Commit {
+                  associatedPullRequests(first: 5) {
+                    nodes {
+                      number
+                      title
+                      body
+                      mergedAt
+                      additions
+                      deletions
+                      baseRefName
+                      baseRefOid
+                      mergeCommit { oid parents(first: 5) { nodes { oid } } }
+                      reviews(first: 1) { totalCount }
+                      files(first: 100) { nodes { path } }
+                    }
+                  }
                 }
               }
             }
             ... on CrossReferencedEvent {
+              willCloseTarget
               source {
                 __typename
                 ... on PullRequest {
@@ -68,7 +88,7 @@ query CollectIssues($owner: String!, $repo: String!, $first: Int!, $after: Strin
                   deletions
                   baseRefName
                   baseRefOid
-                  mergeCommit { oid }
+                  mergeCommit { oid parents(first: 5) { nodes { oid } } }
                   reviews(first: 1) { totalCount }
                   files(first: 100) { nodes { path } }
                 }
@@ -501,27 +521,83 @@ def _make_error_record(
 
 
 def _extract_pr_from_issue(issue: dict[str, Any]) -> tuple[dict[str, Any], str] | None:
-    """Return the first merged PR that closes this issue, plus confidence label."""
+    """Return the best merged PR that closes this issue, plus confidence label."""
+    match, _ = _extract_pr_with_reason(issue)
+    return match
+
+
+def _extract_pr_with_reason(
+    issue: dict[str, Any],
+) -> tuple[tuple[dict[str, Any], str] | None, str | None]:
+    """Return a merged PR match and skip reason when no match exists."""
     timeline_nodes = issue.get("timelineItems", {}).get("nodes", [])
+    candidates: list[tuple[int, int, dict[str, Any], str]] = []
+    saw_pr_link = False
+
     for node in timeline_nodes:
         typename = node.get("__typename")
         if typename == "ClosedEvent":
             closer = node.get("closer")
-            if (
-                closer
-                and closer.get("__typename") == "PullRequest"
-                and closer.get("mergedAt")
-            ):
-                return closer, "direct_close"
+            if not closer:
+                continue
+
+            closer_type = closer.get("__typename")
+            if closer_type == "PullRequest":
+                saw_pr_link = True
+                if closer.get("mergedAt"):
+                    candidates.append((0, int(closer.get("number") or 0), closer, "direct_close"))
+            elif closer_type == "Commit":
+                linked_prs = (
+                    (closer.get("associatedPullRequests") or {}).get("nodes") or []
+                )
+                for pr in linked_prs:
+                    saw_pr_link = True
+                    if pr.get("mergedAt"):
+                        candidates.append(
+                            (
+                                1,
+                                int(pr.get("number") or 0),
+                                pr,
+                                "closed_by_commit_associated_pr",
+                            )
+                        )
+
         if typename == "CrossReferencedEvent":
+            will_close_target = node.get("willCloseTarget")
+            if will_close_target is False:
+                continue
+
             source = node.get("source")
-            if (
-                source
-                and source.get("__typename") == "PullRequest"
-                and source.get("mergedAt")
-            ):
-                return source, "cross_reference"
-    return None
+            if source and source.get("__typename") == "PullRequest":
+                saw_pr_link = True
+                if source.get("mergedAt"):
+                    confidence = (
+                        "cross_reference_closing"
+                        if will_close_target is True
+                        else "cross_reference"
+                    )
+                    candidates.append((2, int(source.get("number") or 0), source, confidence))
+
+    if candidates:
+        candidates.sort(key=lambda item: (item[0], -item[1]))
+        _, _, pr, confidence = candidates[0]
+        return (pr, confidence), None
+
+    if saw_pr_link:
+        return None, "unmerged_link"
+    return None, "no_link"
+
+
+def _timeline_truncated(issue: dict[str, Any]) -> bool:
+    timeline = issue.get("timelineItems", {})
+    nodes = timeline.get("nodes", [])
+    total_count = timeline.get("totalCount")
+    if total_count is None:
+        return False
+    try:
+        return int(total_count) > len(nodes)
+    except (TypeError, ValueError):
+        return False
 
 
 def _build_record(
@@ -564,6 +640,13 @@ def _build_record(
         "deletions": int(pr.get("deletions") or 0),
         "base_sha": pr.get("baseRefOid") or "",
         "merge_sha": (pr.get("mergeCommit") or {}).get("oid") or "",
+        "merge_parent_shas": [
+            node["oid"]
+            for node in (pr.get("mergeCommit") or {})
+            .get("parents", {})
+            .get("nodes", [])
+            if node.get("oid")
+        ],
         "base_branch": pr.get("baseRefName") or "",
         "closing_pr_confidence": confidence,
         "has_tests": len(test_files_changed) > 0,
@@ -691,7 +774,15 @@ async def collect_repo(
     write_lock = asyncio.Lock()
     error_lock = asyncio.Lock()
     stats: dict = {
-        "written": 0, "skipped": 0, "failed": 0, "api_calls": 0, "state": "starting"
+        "written": 0,
+        "skipped": 0,
+        "failed": 0,
+        "api_calls": 0,
+        "state": "starting",
+        "skip_no_link": 0,
+        "skip_unmerged_link": 0,
+        "skip_timeline_truncated": 0,
+        "skip_already_seen": 0,
     }
 
     stop_display = asyncio.Event()
@@ -780,15 +871,22 @@ async def collect_repo(
             issue_number = int(issue["number"])
 
             if issue_number in seen_issues:
+                stats["skip_already_seen"] += 1
                 continue
 
             if issue_number <= since_issue:
                 done = True
                 break
 
-            pr_match = _extract_pr_from_issue(issue)
+            pr_match, skip_reason = _extract_pr_with_reason(issue)
             if not pr_match:
                 stats["skipped"] += 1
+                if skip_reason == "unmerged_link":
+                    stats["skip_unmerged_link"] += 1
+                else:
+                    stats["skip_no_link"] += 1
+                if _timeline_truncated(issue):
+                    stats["skip_timeline_truncated"] += 1
                 continue
 
             pr, confidence = pr_match
@@ -850,5 +948,15 @@ async def collect_repo(
         f"{_ansi('2;37', str(stats['skipped']))} skipped  "
         f"{_ansi('2;37', str(stats['failed']))} failed  "
         f"{_ansi('2;37', str(stats['api_calls']))} calls"
+    )
+    print(
+        _ansi(
+            "2;37",
+            "   skip reasons "
+            f"no_link={stats['skip_no_link']} "
+            f"unmerged_link={stats['skip_unmerged_link']} "
+            f"timeline_truncated={stats['skip_timeline_truncated']} "
+            f"already_seen={stats['skip_already_seen']}",
+        )
     )
     return stats

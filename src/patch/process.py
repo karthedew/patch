@@ -45,6 +45,7 @@ def format_record(record: dict) -> dict:
             "deletions": int(record.get("deletions") or 0),
             "base_sha": record.get("base_sha") or "",
             "merge_sha": record.get("merge_sha") or "",
+            "merge_parent_shas": record.get("merge_parent_shas") or [],
             "base_branch": record.get("base_branch") or "",
             "closing_pr_confidence": record.get("closing_pr_confidence")
             or "unknown",
